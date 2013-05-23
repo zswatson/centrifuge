@@ -18,26 +18,30 @@ def classify_val(val):
         except ValueError:
             return val
 
+filters = {
+    "gaussian": {"needs_border": True},
+    "invert": {"needs_border": False}
+}
+
 class MainHandler(tornado.web.RequestHandler):
     @tornado.web.asynchronous
 
     def get(self):
         self.set_header('Content-Type', 'image/png')
 	url = self.get_argument("url", "", True)
+        filter = self.get_argument("filter", "invert", True)
+        self.__filter, self.__args = self.parse(filter)
+
+        if self.__filter not in filters:
+            return
+
+        rings = 2 if filters[self.__filter]['needs_border'] else 1
 
         if url:
-            self.load_images(url, 2)
-            try:
-                http_client = tornado.httpclient.AsyncHTTPClient()
-                #http_client.fetch(url, self.handle_request)
-            except error:
-                print error
-                self.finish()
+            self.load_images(url, rings)
         else:
             print "Gonna need a URL there, bub"
             self.finish()
-	#self.write(filter + "\t" + url)
-	#self.finish()
 
     def coords_from_url(self, url):
         prefix, coords, suffix = re.split(r'(\d+/\d+/\d+)', url, 1)
@@ -57,7 +61,6 @@ class MainHandler(tornado.web.RequestHandler):
                 temp_url = prefix + '/'.join(str(v) for v in [self.__center_z, x, y]) + suffix
                 url_list.append(temp_url)
                 self.__pending += 1
-                print "requesting", temp_url
                 http_client = tornado.httpclient.AsyncHTTPClient()
                 http_client.fetch(temp_url, self.__item_callback)
 
@@ -66,7 +69,6 @@ class MainHandler(tornado.web.RequestHandler):
         offset_x = x - self.__center_x
         offset_y = y - self.__center_y
 
-        print "item_callback", offset_x, offset_y
         self.__results[(offset_x, offset_y)] = response.body
         self.__pending -= 1
         if self.__pending == 0:
@@ -85,35 +87,27 @@ class MainHandler(tornado.web.RequestHandler):
         for key in images:
             x = size[0] * (key[0] + self.__rings - 1)
             y = size[1] * (key[1] + self.__rings - 1)
-            print "image", key, "pasting at", x, y
             im = images[key]
             metatile.paste(im, (x, y))
 
         # perform filtering
-        metatile = self.gaussian(metatile, 10)
+        if self.__filter == "gaussian":
+            metatile = self.gaussian(metatile, self.__args["radius"])
+            tile = metatile.crop((
+                    (self.__rings - 1) * size[0],
+                    (self.__rings - 1) * size[1],
+                    (self.__rings) * size[0],
+                    (self.__rings) * size[0]))
+
+        elif self.__filter == "invert":
+            tile = self.invert(metatile)
 
         img_buff = StringIO()
-        metatile.save(img_buff, 'png')
+        tile.save(img_buff, 'png')
         self.write(img_buff.getvalue())
         self.finish()
 
-    def handle_request(self, response):
-        if response.error:                                                   
-            print("Error:", response.error)
-            self.finish()
-        else:                                                                
-            image = Image.open(StringIO(response.body))
-            filter = self.get_argument("filter", "invert", True)
-            print "filtering:", filter, self.parse(filter)
-            
-            inv_im = self.invert(image)
-            img_buff = StringIO()
-            inv_im.save(img_buff, 'png')
-            self.write(img_buff.getvalue())
-            self.finish()
-
     def parse(self, filter_string):
-        filter_string = "blur(radius=40,type=gaussian)"
         parts = filter_string.partition("(")
         filter_type = parts[0]
         args = {}
@@ -144,7 +138,8 @@ class MainHandler(tornado.web.RequestHandler):
         return Image.fromarray(data)
 
     def invert(self, image):
-        arr = 255 - numpy.array(image)
+        arr = numpy.array(image)
+        arr[...,0:3] = 255 - arr[...,0:3]
         return Image.fromarray(arr)
 
 application = tornado.web.Application([
