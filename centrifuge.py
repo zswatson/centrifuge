@@ -20,7 +20,9 @@ def classify_val(val):
 
 filters = {
     "gaussian": {"needs_border": True},
-    "invert": {"needs_border": False}
+    "invert": {"needs_border": False},
+    "contrast": {"needs_border": False},
+    "levels": {"needs_border": False}
 }
 
 class MainHandler(tornado.web.RequestHandler):
@@ -33,6 +35,8 @@ class MainHandler(tornado.web.RequestHandler):
         self.__filter, self.__args = self.parse(filter)
 
         if self.__filter not in filters:
+            print "Unknown filter"
+            self.finish()
             return
 
         rings = 2 if filters[self.__filter]['needs_border'] else 1
@@ -99,6 +103,10 @@ class MainHandler(tornado.web.RequestHandler):
                     (self.__rings) * size[0],
                     (self.__rings) * size[0]))
 
+        elif self.__filter == "contrast":
+            tile = self.contrast(metatile, self.__args["percent"])
+        elif self.__filter == "levels":
+            tile = self.levels(metatile, self.__args)
         elif self.__filter == "invert":
             tile = self.invert(metatile)
 
@@ -140,6 +148,23 @@ class MainHandler(tornado.web.RequestHandler):
     def invert(self, image):
         arr = numpy.array(image)
         arr[...,0:3] = 255 - arr[...,0:3]
+        return Image.fromarray(arr)
+
+    def contrast(self, image, percent):
+        print "contrast", percent
+        arr = numpy.array(image)
+        return Image.fromarray(arr)
+
+    def rgbToHSV(self, arr):
+        chroma = 5
+
+    def levels(self, image, args):
+        in_min, gamma, in_max, out_min, out_max = float(args["in_min"]), float(args["gamma"]), float(args["in_max"]), float(args["out_min"]), float(args["out_max"])
+        arr = numpy.array(image)
+        arr_normal = numpy.clip((arr[...,0:3] - in_min) / (in_max - in_min), 0.0, 255.0)
+        arr_gamma = numpy.power(arr_normal, gamma)
+        arr_rescale = numpy.clip(arr_gamma * (out_max - out_min) + out_min, 0.0, 255.0)
+        arr[...,0:3] = arr_rescale
         return Image.fromarray(arr)
 
 application = tornado.web.Application([
