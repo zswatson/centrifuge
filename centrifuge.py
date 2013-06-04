@@ -3,11 +3,12 @@ import tornado.ioloop
 import tornado.web
 import tornado.httpclient
 import Image
-import numpy
+import numpy, scipy
 import numpy as np
 from numpy import fromstring, ubyte, e, array, add, uint8, copy, clip
 from scipy.ndimage.filters import convolve1d
 from cStringIO import StringIO
+from math import log
 
 def classify_val(val):
     v = val
@@ -239,6 +240,8 @@ class MainHandler(tornado.web.RequestHandler):
                 metatile = self.contrast(metatile, fx.args["percent"])
             elif fx.type == "hsv":
                 metatile = self.hsv(metatile, fx.args)
+            elif fx.type == "pixelate":
+                metatile = self.pixelate(metatile, fx.args)
             elif fx.type == "levels":
                 metatile = self.levels(metatile, fx.args)
             elif fx.type == "invert":
@@ -302,16 +305,31 @@ class MainHandler(tornado.web.RequestHandler):
             "out_min": 0.0,
             "out_max": 255.0
 	}
-
         args = {}
         for k in defaults:
             args[k] = float(url_args.get(k, defaults[k]))
+
         arr = numpy.array(image)
         arr_normal = numpy.clip((arr[...,0:3] - args["in_min"]) / (args["in_max"] - args["in_min"]), 0.0, 255.0)
         arr_gamma = numpy.power(arr_normal, args["gamma"])
         arr_rescale = numpy.clip(arr_gamma * (args["out_max"] - args["out_min"]) + args["out_min"], 0.0, 255.0)
         arr[...,0:3] = arr_rescale
         return Image.fromarray(arr)
+
+    def pixelate(self, image, url_args):
+        defaults = {
+            "size": 4
+            }
+        args = {}
+        for k in defaults:
+            args[k] = float(url_args.get(k, defaults[k]))
+
+        args["size"] = pow(2, int(log(args["size"], 2) + 0.5))
+
+        arr = numpy.array(image)
+        arr2 = scipy.misc.imresize(arr, (arr.shape[0] / args["size"], arr.shape[1] / args["size"], arr.shape[2]))
+        arr3 = scipy.misc.imresize(arr2, arr.shape, 'nearest')
+        return Image.fromarray(arr3)
 
     def hsv(self, image, url_args):
         args = {
@@ -358,6 +376,7 @@ filters = {
     "invert": {"needs_border": False},
     "contrast": {"needs_border": False},
     "hsv": {"needs_border": False},
+    "pixelate": {"needs_border": False},
     "levels": {"needs_border": False}
 }
 
