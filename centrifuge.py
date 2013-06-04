@@ -19,14 +19,6 @@ def classify_val(val):
         except ValueError:
             return val
 
-filters = {
-    "gaussian": {"needs_border": True},
-    "invert": {"needs_border": False},
-    "contrast": {"needs_border": False},
-    "hsv": {"needs_border": False},
-    "levels": {"needs_border": False}
-}
-
 def rgb2hsv(rgb):
     """RGB to HSV color space conversion.
 
@@ -166,16 +158,25 @@ class MainHandler(tornado.web.RequestHandler):
 
     def get(self):
         self.set_header('Content-Type', 'image/png')
+        rings = 1
 	url = self.get_argument("url", "", True)
-        filter = self.get_argument("filter", "invert", True)
-        self.__filter, self.__args = self.parse(filter)
+        filter_query = self.get_argument("filter", "", True)
+        r = re.compile(r'(?:[^,(]|\([^)]*\))+')
+        filter_strings = r.findall(filter_query)
+        self.filters = []
+        for f in filter_strings:
+            temp = fx.fromstring(f)
+            if temp.type in filters:
+                self.filters.append(temp)
+            else:
+                print "Unknown filter:", temp.type
+            if temp.type == "gaussian":
+                rings = 2
 
-        if self.__filter not in filters:
-            print "Unknown filter"
+        if len(self.filters) == 0:
+            print "No known filters"
             self.finish()
             return
-
-        rings = 2 if filters[self.__filter]['needs_border'] else 1
 
         if url:
             self.load_images(url, rings)
@@ -231,23 +232,23 @@ class MainHandler(tornado.web.RequestHandler):
             metatile.paste(im, (x, y))
 
         # perform filtering
-        if self.__filter == "gaussian":
-            metatile = self.gaussian(metatile, self.__args["radius"])
-            tile = metatile.crop((
-                    (self.__rings - 1) * size[0],
-                    (self.__rings - 1) * size[1],
-                    (self.__rings) * size[0],
-                    (self.__rings) * size[0]))
+        for fx in self.filters:
+            if fx.type == "gaussian":
+                metatile = self.gaussian(metatile, fx.args["radius"])
+            elif fx.type == "contrast":
+                metatile = self.contrast(metatile, fx.args["percent"])
+            elif fx.type == "hsv":
+                metatile = self.hsv(metatile, fx.args)
+            elif fx.type == "levels":
+                metatile = self.levels(metatile, fx.args)
+            elif fx.type == "invert":
+                metatile = self.invert(metatile)
 
-        elif self.__filter == "contrast":
-            tile = self.contrast(metatile, self.__args["percent"])
-        elif self.__filter == "hsv":
-            tile = self.hsv(metatile, self.__args)
-        elif self.__filter == "levels":
-            tile = self.levels(metatile, self.__args)
-        elif self.__filter == "invert":
-            tile = self.invert(metatile)
-
+        tile = metatile.crop((
+                (self.__rings - 1) * size[0],
+                (self.__rings - 1) * size[1],
+                (self.__rings) * size[0],
+                (self.__rings) * size[0]))
         img_buff = StringIO()
         tile.save(img_buff, 'png')
         self.write(img_buff.getvalue())
@@ -328,6 +329,37 @@ class MainHandler(tornado.web.RequestHandler):
         hsv[...,2] = numpy.clip(hsv[...,2] + float(args["value"]), 0.0, 1.0)
         arr[...,0:3] = hsv2rgb(hsv) * 255.0
         return Image.fromarray(arr)
+
+class fx:
+    def __init__(self, filter_type, filter_args):
+        self.type = filter_type
+        self.args = filter_args
+
+    @classmethod
+    def fromstring(fil, filter_string):
+        parts = filter_string.partition("(")
+        filter_type = parts[0]
+        args = {}
+        if parts[2]:
+            arg_string = parts[2]
+            if arg_string[-1] == ')':
+                arg_string = arg_string[:-1]
+                arg_split = arg_string.split(",")
+                for a in arg_split:
+                    key, eq, val = a.partition("=")
+                    val = classify_val(val)
+                    args[key] = val
+            else:
+                print("Error: No terminating parenthesis in filter args")
+        return fx(filter_type, args)
+
+filters = {
+    "gaussian": {"needs_border": True},
+    "invert": {"needs_border": False},
+    "contrast": {"needs_border": False},
+    "hsv": {"needs_border": False},
+    "levels": {"needs_border": False}
+}
 
 application = tornado.web.Application([
     (r"/", MainHandler),
