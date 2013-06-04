@@ -293,12 +293,22 @@ class MainHandler(tornado.web.RequestHandler):
         arr = numpy.array(image)
         return Image.fromarray(arr)
 
-    def levels(self, image, args):
-        in_min, gamma, in_max, out_min, out_max = float(args["in_min"]), float(args["gamma"]), float(args["in_max"]), float(args["out_min"]), float(args["out_max"])
+    def levels(self, image, url_args):
+	defaults = {
+            "in_min": 0.0,
+            "gamma": 1.0,
+            "in_max": 255.0,
+            "out_min": 0.0,
+            "out_max": 255.0
+	}
+
+        args = {}
+        for k in defaults:
+            args[k] = float(url_args.get(k, defaults[k]))
         arr = numpy.array(image)
-        arr_normal = numpy.clip((arr[...,0:3] - in_min) / (in_max - in_min), 0.0, 255.0)
-        arr_gamma = numpy.power(arr_normal, gamma)
-        arr_rescale = numpy.clip(arr_gamma * (out_max - out_min) + out_min, 0.0, 255.0)
+        arr_normal = numpy.clip((arr[...,0:3] - args["in_min"]) / (args["in_max"] - args["in_min"]), 0.0, 255.0)
+        arr_gamma = numpy.power(arr_normal, args["gamma"])
+        arr_rescale = numpy.clip(arr_gamma * (args["out_max"] - args["out_min"]) + args["out_min"], 0.0, 255.0)
         arr[...,0:3] = arr_rescale
         return Image.fromarray(arr)
 
